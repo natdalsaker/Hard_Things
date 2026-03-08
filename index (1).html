@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Hard Things" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>Hard Things Journal</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; -webkit-font-smoothing: antialiased; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; background: #0a0a0a; }
+    body { overscroll-behavior: none; }
+    textarea { resize: vertical; font-family: Georgia, serif; }
+    textarea:focus, button:focus, input:focus { outline: none; }
+    textarea::placeholder, input::placeholder { color: #282828; }
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-track { background: #0a0a0a; }
+    ::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    .fade-up { animation: fadeUp 0.35s ease forwards; }
+    .fu1{animation:fadeUp 0.35s ease 0.05s forwards;opacity:0}
+    .fu2{animation:fadeUp 0.35s ease 0.10s forwards;opacity:0}
+    .fu3{animation:fadeUp 0.35s ease 0.15s forwards;opacity:0}
+    .fu4{animation:fadeUp 0.35s ease 0.20s forwards;opacity:0}
+    .fu5{animation:fadeUp 0.35s ease 0.25s forwards;opacity:0}
+    .fu6{animation:fadeUp 0.35s ease 0.30s forwards;opacity:0}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const MOODS_BEFORE = ["😤 Dreading it","😬 Anxious","😑 Resistant","😐 Neutral","🤷 Unsure"];
+const MOODS_AFTER  = ["😮‍💨 Relieved","😌 Proud","😐 Meh, fine","💪 Energised","🔥 Amazing"];
+const CATEGORIES   = ["work","health","social","creative","admin","personal","other"];
+const PERIODS      = ["daily","weekly","monthly"];
+const A="#c8f060", R="#e06040", P="#a080f0", O="#e0a040";
+const mono = { fontFamily:"'IBM Plex Mono',monospace" };
+
+function fDate(iso){ return new Date(iso).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}); }
+function fTime(iso){ return new Date(iso).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}); }
+function sameDay(a,b){ const da=new Date(a),db=new Date(b); return da.getFullYear()===db.getFullYear()&&da.getMonth()===db.getMonth()&&da.getDate()===db.getDate(); }
+function weekStart(d=new Date()){ const dt=new Date(d),day=dt.getDay(); dt.setDate(dt.getDate()-day+(day===0?-6:1)); dt.setHours(0,0,0,0); return dt; }
+function monthStart(d=new Date()){ const dt=new Date(d); dt.setDate(1); dt.setHours(0,0,0,0); return dt; }
+
+// Count entries relevant to a goal this period
+function countGoalProgress(entries, goal) {
+  const now = new Date();
+  let since;
+  if (goal.period === "daily") since = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  else if (goal.period === "weekly") since = weekStart();
+  else since = monthStart();
+  // Support multiple comma-separated keywords
+  const keywords = goal.keyword ? goal.keyword.split(",").map(k=>k.trim().toLowerCase()).filter(Boolean) : [];
+  return entries.filter(e => {
+    if (e.type !== "did") return false;
+    if (new Date(e.ts) < since) return false;
+    if (goal.category !== "any" && e.category !== goal.category) return false;
+    if (keywords.length === 0) return true;
+    const entryText = e.text.toLowerCase();
+    return keywords.some(k => entryText.includes(k));
+  }).length;
+}
+
+function buildProfile(entries, goals){
+  const done=entries.filter(e=>e.type==="did"), skip=entries.filter(e=>e.type==="skipped");
+  const catDone={},catSkip={};
+  done.forEach(e=>{ catDone[e.category||"general"]=(catDone[e.category||"general"]||0)+1; });
+  skip.forEach(e=>{ catSkip[e.category||"general"]=(catSkip[e.category||"general"]||0)+1; });
+  const hours=done.map(e=>new Date(e.ts).getHours());
+  const avgHour=hours.length?Math.round(hours.reduce((a,b)=>a+b,0)/hours.length):null;
+  const goalSummary = goals.length ? goals.map(g=>`Goal: "${g.title}" — ${g.target}x ${g.period} (category: ${g.category}, keyword: ${g.keyword||"any"})`).join("; ") : "none set";
+  const goalProgress = goals.length ? goals.map(g=>`"${g.title}": ${countGoalProgress(entries,g)}/${g.target} this ${g.period}`).join("; ") : "none";
+  return { done:done.length, skipped:skip.length, total:entries.length,
+    stopReasons:skip.map(e=>e.whatStopped).filter(Boolean).slice(0,8),
+    catDone:Object.entries(catDone).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}(${v})`).join(", ")||"none",
+    catSkip:Object.entries(catSkip).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}(${v})`).join(", ")||"none",
+    shifts:entries.filter(e=>e.moodBefore&&e.moodAfter).length, avgHour, goalSummary, goalProgress };
+}
+
+function parseInsights(text){
+  const hdrs=["YOUR AVOIDANCE PATTERNS","YOUR MOOD TRUTH","WHERE YOU'RE STRONGEST","YOUR BLIND SPOTS","GOAL PROGRESS","3 PERSONALISED TECHNIQUES","ONE THING TO DO THIS WEEK"];
+  const out=[];
+  for(let i=0;i<hdrs.length;i++){
+    const idx=text.indexOf(hdrs[i]); if(idx===-1) continue;
+    const end=hdrs[i+1]?text.indexOf(hdrs[i+1]):text.length;
+    out.push({ h:hdrs[i], c:text.slice(idx+hdrs[i].length,end!==-1?end:undefined).trim() });
+  }
+  return out.length?out:[{h:"",c:text}];
+}
+const SC={"YOUR AVOIDANCE PATTERNS":R,"YOUR MOOD TRUTH":A,"WHERE YOU'RE STRONGEST":A,"YOUR BLIND SPOTS":"#e0a040","GOAL PROGRESS":O,"3 PERSONALISED TECHNIQUES":P,"ONE THING TO DO THIS WEEK":P};
+
+async function claude(apiKey,system,msg,max=900){
+  const r=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:max,system,messages:[{role:"user",content:msg}]})
+  });
+  const d=await r.json();
+  if(d.error) throw new Error(d.error.message);
+  return d.content?.map(b=>b.text||"").join("")||"";
+}
+
+function Label({c}){ return <div style={{fontSize:10,letterSpacing:"0.18em",color:"#555",marginBottom:10,...mono}}>{c}</div>; }
+function Moods({opts,val,set,lbl}){
+  return <div style={{marginBottom:20}}>
+    <Label c={lbl}/>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      {opts.map(m=><button key={m} onClick={()=>set(val===m?null:m)} style={{background:val===m?"#202020":"transparent",color:val===m?"#f0ede6":"#4a4a4a",border:`1px solid ${val===m?"#404040":"#1e1e1e"}`,padding:"7px 12px",fontSize:13,borderRadius:4,cursor:"pointer",transition:"all 0.12s",WebkitTapHighlightColor:"transparent",...mono}}>{m}</button>)}
+    </div>
+  </div>;
+}
+function Card({e,go}){
+  const sk=e.type==="skipped";
+  return <div onClick={go} style={{padding:"16px 0",borderBottom:"1px solid #141414",cursor:"pointer",WebkitTapHighlightColor:"transparent"}}>
+    <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,alignItems:"center"}}>
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+        {sk?<span style={{fontSize:9,...mono,color:R,letterSpacing:"0.12em",background:"#1c0e0a",padding:"2px 8px",borderRadius:2}}>SKIPPED</span>
+           :e.category?<span style={{fontSize:9,...mono,color:A,letterSpacing:"0.12em"}}>{e.category.toUpperCase()}</span>:null}
+        {!sk&&e.moodBefore&&<span style={{fontSize:12,color:"#444"}}>{e.moodBefore}</span>}
+        {!sk&&e.moodAfter&&<><span style={{fontSize:11,color:"#2a2a2a"}}>→</span><span style={{fontSize:12,color:"#777"}}>{e.moodAfter}</span></>}
+      </div>
+      <span style={{fontSize:10,color:"#3a3a3a",...mono}}>{fTime(e.ts)}</span>
+    </div>
+    <p style={{margin:0,fontSize:15,lineHeight:1.55,color:"#ccc"}}>{e.text.length>90?e.text.slice(0,90)+"…":e.text}</p>
+  </div>;
+}
+
+// Progress bar component
+function ProgressBar({current, target, color=A}){
+  const pct = Math.min(100, Math.round((current/target)*100));
+  return <div style={{marginTop:8}}>
+    <div style={{background:"#1a1a1a",borderRadius:4,height:6,overflow:"hidden"}}>
+      <div style={{width:`${pct}%`,height:"100%",background:pct>=100?A:color,borderRadius:4,transition:"width 0.4s ease"}}/>
+    </div>
+    <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+      <span style={{fontSize:10,color:"#444",...mono}}>{current}/{target}</span>
+      <span style={{fontSize:10,color:pct>=100?A:"#444",...mono}}>{pct>=100?"✓ DONE":pct+"%"}</span>
+    </div>
+  </div>;
+}
+
+function Setup({onSave}){
+  const [k,setK]=useState(""), [localErr,setLocalErr]=useState(""), [testing,setTesting]=useState(false);
+  async function go(){
+    if(!k.trim().startsWith("sk-ant-")){ setLocalErr("Keys start with 'sk-ant-' — double check you copied the whole thing."); return; }
+    setTesting(true); setLocalErr("");
+    try{ await claude(k.trim(),"You are helpful.","Say only: ready",10); localStorage.setItem("htj-key",k.trim()); onSave(k.trim()); }
+    catch(e){ setLocalErr("Couldn't verify — check the key and try again."); }
+    setTesting(false);
+  }
+  return <div style={{minHeight:"100vh",background:"#0a0a0a",color:"#f0ede6",fontFamily:"Georgia,serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 24px"}}>
+    <div style={{maxWidth:460,width:"100%"}}>
+      <h1 style={{fontSize:28,fontWeight:400,fontStyle:"italic",marginBottom:8}}>Hard Things</h1>
+      <p style={{fontSize:13,color:"#555",marginBottom:28,lineHeight:1.7}}>One-time setup. You need an Anthropic API key to power the AI features.</p>
+      <div style={{background:"#0f0f0f",border:"1px solid #1e1e1e",borderRadius:8,padding:20,marginBottom:24}}>
+        <div style={{fontSize:10,...mono,color:"#555",letterSpacing:"0.14em",marginBottom:12}}>HOW TO GET YOUR KEY</div>
+        <ol style={{paddingLeft:18,fontSize:14,color:"#888",lineHeight:2.2}}>
+          <li>Go to <span style={{color:A,...mono}}>console.anthropic.com</span></li>
+          <li>Sign in and add billing (from $5)</li>
+          <li>Click <b style={{color:"#ccc"}}>"API Keys"</b> → <b style={{color:"#ccc"}}>"Create Key"</b></li>
+          <li>Copy the key and paste below</li>
+        </ol>
+      </div>
+      <Label c="PASTE YOUR API KEY"/>
+      <input type="password" value={k} onChange={e=>setK(e.target.value)} placeholder="sk-ant-api03-..."
+        style={{width:"100%",background:"#0d0d0d",border:"1px solid #2a2a2a",color:"#f0ede6",padding:"14px",fontSize:14,borderRadius:8,marginBottom:10,...mono}}
+        onFocus={e=>e.target.style.borderColor="#444"} onBlur={e=>e.target.style.borderColor="#2a2a2a"} />
+      {localErr&&<p style={{fontSize:12,color:R,marginBottom:10,...mono}}>{localErr}</p>}
+      <button onClick={go} disabled={!k.trim()||testing} style={{width:"100%",background:k.trim()?A:"#111",color:k.trim()?"#0a0a0a":"#333",border:"none",padding:"15px",fontSize:13,fontWeight:700,borderRadius:8,cursor:k.trim()?"pointer":"default",letterSpacing:"0.1em",...mono}}>
+        {testing?"CHECKING…":"SAVE & START →"}
+      </button>
+      <p style={{fontSize:11,color:"#2a2a2a",marginTop:12,lineHeight:1.6,...mono}}>Stored only on this device. Never shared.</p>
+    </div>
+  </div>;
+}
+
+function App(){
+  const [apiKey,setApiKey]=useState(null);
+  const [entries,setEntries]=useState([]);
+  const [goals,setGoals]=useState([]);
+  const [loaded,setLoaded]=useState(false);
+  const [view,setView]=useState("log");
+
+  // form
+  const [eType,setEType]=useState("did");
+  const [txt,setTxt]=useState(""), [cat,setCat]=useState(""), [mb,setMb]=useState(null), [ma,setMa]=useState(null);
+  const [ws,setWs]=useState(""), [nt,setNt]=useState(""), [saving,setSaving]=useState(false);
+
+  // goal form
+  const [showGoalForm,setShowGoalForm]=useState(false);
+  const [gTitle,setGTitle]=useState(""), [gTarget,setGTarget]=useState(""), [gPeriod,setGPeriod]=useState("weekly");
+  const [gCat,setGCat]=useState("any"), [gKeyword,setGKeyword]=useState(""), [gSaving,setGSaving]=useState(false);
+
+  // summary / insights / detail
+  const [sum,setSum]=useState(""), [sumL,setSumL]=useState(false);
+  const [ins,setIns]=useState(""), [insL,setInsL]=useState(false);
+  const [det,setDet]=useState(null), [refl,setRefl]=useState(""), [reflL,setReflL]=useState(false);
+  const [toast,setToast]=useState("");
+
+  useEffect(()=>{
+    const k=localStorage.getItem("htj-key"); if(k) setApiKey(k);
+    try{ const r=localStorage.getItem("htj-entries"); if(r) setEntries(JSON.parse(r)); }catch(_){}
+    try{ const g=localStorage.getItem("htj-goals"); if(g) setGoals(JSON.parse(g)); }catch(_){}
+    try{ const i=localStorage.getItem("htj-insights"); if(i) setIns(i); }catch(_){}
+    setLoaded(true);
+  },[]);
+
+  function saveEntries(list){ setEntries(list); try{ localStorage.setItem("htj-entries",JSON.stringify(list)); }catch(_){} }
+  function saveGoals(list){ setGoals(list); try{ localStorage.setItem("htj-goals",JSON.stringify(list)); }catch(_){} }
+  function flash(m){ setToast(m); setTimeout(()=>setToast(""),2400); }
+  function resetForm(){ setTxt(""); setCat(""); setMb(null); setMa(null); setWs(""); setNt(""); }
+
+  async function submit(){
+    if(!txt.trim()) return; setSaving(true);
+    const e={id:Date.now(),type:eType,text:txt.trim(),category:cat,moodBefore:mb,
+      moodAfter:eType==="did"?ma:null, whatStopped:eType==="skipped"?ws.trim():"", nextTime:eType==="skipped"?nt.trim():"", ts:new Date().toISOString()};
+    saveEntries([e,...entries]); resetForm();
+    flash(eType==="did"?"✓ Logged. Keep going.":"✓ Noted. Use it next time."); setSaving(false);
+  }
+
+  function addGoal(){
+    if(!gTitle.trim()||!gTarget) return; setGSaving(true);
+    const g={id:Date.now(),title:gTitle.trim(),target:parseInt(gTarget),period:gPeriod,category:gCat,keyword:gKeyword.trim()};
+    saveGoals([...goals,g]);
+    setGTitle(""); setGTarget(""); setGPeriod("weekly"); setGCat("any"); setGKeyword("");
+    setShowGoalForm(false); setGSaving(false); flash("✓ Goal added!");
+  }
+
+  function deleteGoal(id){ saveGoals(goals.filter(g=>g.id!==id)); }
+
+  async function getSummary(p){
+    setSumL(true); setSum("");
+    const now=new Date(), list=p==="today"?entries.filter(e=>sameDay(e.ts,now)):entries.filter(e=>new Date(e.ts)>=weekStart());
+    if(!list.length){ setSum("Nothing logged yet."); setSumL(false); return; }
+    const lines=list.map((e,i)=>e.type==="skipped"
+      ?`${i+1}. [SKIPPED] ${e.text} | stopped: ${e.whatStopped||"?"} | next: ${e.nextTime||"?"}`
+      :`${i+1}. [${e.category||"general"}] ${e.text} | before: ${e.moodBefore||"?"} | after: ${e.moodAfter||"?"}`).join("\n");
+    const goalCtx = goals.length ? `\n\nUser's active goals: ${goals.map(g=>`"${g.title}" (${g.target}x ${g.period}, progress: ${countGoalProgress(entries,g)}/${g.target})`).join(", ")}` : "";
+    try{
+      const t=await claude(apiKey,
+        "You are a direct warm growth coach. The user logs hard things they did AND skipped. They also have specific goals. Give: wins (2 sentences), mood shift patterns, what skipped items reveal, how entries relate to their goals, two concrete improvements. Human tone, plain text only.",
+        `My ${p==="today"?"today":"this week"}:\n\n${lines}${goalCtx}`);
+      setSum(t);
+    }catch(_){ setSum("Connection error."); } setSumL(false);
+  }
+
+  async function genInsights(){
+    setInsL(true); setIns("");
+    const profile=buildProfile(entries,goals);
+    const lines=entries.slice(0,60).map((e,i)=>e.type==="skipped"
+      ?`${i+1}. [SKIPPED] "${e.text}" | feeling:${e.moodBefore||"?"} | stopped:${e.whatStopped||"?"} | nexttime:${e.nextTime||"?"} | ${fDate(e.ts)}`
+      :`${i+1}. [DID] "${e.text}" | before:${e.moodBefore||"?"} | after:${e.moodAfter||"?"} | cat:${e.category||"general"} | ${fDate(e.ts)}`).join("\n");
+    const prof=`Stats: ${profile.done} done, ${profile.skipped} skipped of ${profile.total}.\nAvoidance triggers: ${profile.stopReasons.join("; ")||"none"}.\nDone most: ${profile.catDone}. Skipped most: ${profile.catSkip}.\nMood shifts: ${profile.shifts}. Avg hour: ${profile.avgHour!==null?profile.avgHour+":00":"unknown"}.\nGoals set: ${profile.goalSummary}.\nCurrent goal progress: ${profile.goalProgress}.`;
+    try{
+      const t=await claude(apiKey,
+        `You are an insightful personal growth coach with access to someone's full hard-things journal AND their goals. Find real patterns in THEIR specific data and give personalised, actionable tips.
+
+Produce exactly this structure using these headers verbatim:
+
+YOUR AVOIDANCE PATTERNS
+What this person tends to avoid, when, and triggers. Reference actual entries. 2-3 sentences.
+
+YOUR MOOD TRUTH
+What their before/after mood data proves about how they feel after doing hard things. 2-3 sentences.
+
+WHERE YOU'RE STRONGEST
+Which categories they follow through on most and what it tells them. 2 sentences.
+
+YOUR BLIND SPOTS
+What they consistently avoid or aren't improving on. Be honest. 2-3 sentences.
+
+GOAL PROGRESS
+Honest assessment of how their journal entries align with their stated goals. Are they logging things that move the needle? What's the gap between their goals and their actions? 2-3 sentences.
+
+3 PERSONALISED TECHNIQUES
+Exactly 3 techniques tailored to THIS person's patterns AND goals:
+1. [Name]: explanation (why it fits their specific pattern)
+2. [Name]: explanation
+3. [Name]: explanation
+
+ONE THING TO DO THIS WEEK
+One specific concrete action tied to their goals and patterns.
+
+Be direct, human, base everything on actual data. Plain text only — no markdown.`,
+        `My journal:\n\nPROFILE:\n${prof}\n\nENTRIES:\n${lines}`, 1400);
+      setIns(t); try{ localStorage.setItem("htj-insights",t); }catch(_){}
+    }catch(_){ setIns("Connection error."); } setInsL(false);
+  }
+
+  async function getRefl(entry){
+    setReflL(true); setRefl("");
+    const goalCtx = goals.length ? `\n\nUser's goals: ${goals.map(g=>g.title).join(", ")}` : "";
+    const prompt=entry.type==="skipped"
+      ?`Avoided: "${entry.text}"\nFeeling: "${entry.moodBefore||"?"}"\nStopped by: "${entry.whatStopped||"?"}"\nNext time: "${entry.nextTime||"?"}"\n${goalCtx}\n\n3-4 sentences: why this happens, what it reveals, one concrete thing to try.`
+      :`Did: "${entry.text}"\nBefore: ${entry.moodBefore||"?"} → After: ${entry.moodAfter||"not noted"}\nCategory: ${entry.category||"general"}\n${goalCtx}\n\n3-4 sentences on the mood shift, what doing this says about them, one growth insight — reference their goals if relevant.`;
+    try{ const t=await claude(apiKey,"Direct warm growth coach. Specific and human. No corporate language.",prompt,350); setRefl(t); }
+    catch(_){ setRefl("Couldn't connect."); } setReflL(false);
+  }
+
+  if(!loaded) return <div style={{minHeight:"100vh",background:"#0a0a0a",display:"flex",alignItems:"center",justifyContent:"center",color:"#222",...mono,fontSize:12,letterSpacing:2}}>LOADING...</div>;
+  if(!apiKey) return <Setup onSave={setApiKey}/>;
+
+  const today=entries.filter(e=>sameDay(e.ts,new Date()));
+  const week=entries.filter(e=>new Date(e.ts)>=weekStart());
+  const sa={paddingBottom:"env(safe-area-inset-bottom,16px)"};
+
+  return <div style={{minHeight:"100vh",background:"#0a0a0a",color:"#f0ede6",fontFamily:"Georgia,'Times New Roman',serif",overflowX:"hidden"}}>
+    <div style={{position:"fixed",inset:0,zIndex:0,pointerEvents:"none",background:"radial-gradient(ellipse at 15% 15%,#161208 0%,transparent 55%),radial-gradient(ellipse at 85% 85%,#0c1608 0%,transparent 55%)"}}/>
+
+    {toast&&<div style={{position:"fixed",top:"calc(env(safe-area-inset-top,0px) + 16px)",left:"50%",transform:"translateX(-50%)",zIndex:999,background:A,color:"#0a0a0a",padding:"10px 22px",borderRadius:4,fontWeight:700,fontSize:13,letterSpacing:"0.06em",...mono,boxShadow:"0 4px 24px rgba(200,240,96,0.35)",whiteSpace:"nowrap"}}>{toast}</div>}
+
+    {/* Sticky header */}
+    <div style={{position:"sticky",top:0,zIndex:10,background:"rgba(10,10,10,0.95)",backdropFilter:"blur(10px)",borderBottom:"1px solid #181818",paddingTop:"env(safe-area-inset-top,0px)"}}>
+      <div style={{maxWidth:640,margin:"0 auto",padding:"14px 20px 0"}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:12,marginBottom:2}}>
+          <h1 style={{fontSize:22,fontWeight:400,letterSpacing:"-0.02em",fontStyle:"italic"}}>Hard Things</h1>
+          <span style={{fontSize:10,color:"#333",letterSpacing:"0.14em",...mono}}>JOURNAL</span>
+          <span style={{marginLeft:"auto",fontSize:11,color:"#333",...mono}}>{entries.length} logged</span>
+        </div>
+        <div style={{display:"flex",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+          {[["log","Log"],["goals","Goals"],["today","Today"],["week","Week"],["insights","✦"]].map(([k,l])=>(
+            <button key={k} onClick={()=>{ setView(k); setSum(""); }} style={{background:"none",border:"none",flexShrink:0,
+              color:view===k?(k==="insights"?P:k==="goals"?O:A):"#3a3a3a",
+              fontSize:12,padding:"10px 14px 10px 0",cursor:"pointer",fontWeight:view===k?700:400,letterSpacing:"0.1em",
+              borderBottom:`2px solid ${view===k?(k==="insights"?P:k==="goals"?O:A):"transparent"}`,
+              transition:"all 0.14s",WebkitTapHighlightColor:"transparent",...mono}}>{l.toUpperCase()}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+
+    <div style={{position:"relative",zIndex:1,maxWidth:640,margin:"0 auto",padding:"28px 20px 40px",...sa}}>
+
+      {/* ════ LOG ════ */}
+      {view==="log"&&<div className="fade-up">
+        {/* Goal progress mini-strip at top of log if goals exist */}
+        {goals.length>0&&<div style={{marginBottom:24,padding:"14px 16px",background:"#0d0d0d",border:"1px solid #1e1e1e",borderRadius:8}}>
+          <Label c="THIS PERIOD'S GOALS"/>
+          {goals.map(g=>{
+            const prog=countGoalProgress(entries,g);
+            const pct=Math.min(100,Math.round((prog/g.target)*100));
+            return <div key={g.id} style={{marginBottom:goals.indexOf(g)<goals.length-1?12:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:13,color:"#ccc"}}>{g.title}</span>
+                <span style={{fontSize:10,...mono,color:pct>=100?A:"#555"}}>{g.period.toUpperCase()}</span>
+              </div>
+              <ProgressBar current={prog} target={g.target}/>
+            </div>;
+          })}
+        </div>}
+
+        <div style={{marginBottom:28}}>
+          <Label c="WHAT KIND OF ENTRY IS THIS?"/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            {[["did","✅","I DID IT","Something hard you did even when you didn't want to"],["skipped","❌","I SKIPPED IT","Something you avoided — log it to learn from it"]].map(([k,ic,ti,de])=>(
+              <button key={k} onClick={()=>setEType(k)} style={{background:eType===k?(k==="did"?"#0f1a08":"#1a0e08"):"#0d0d0d",border:`2px solid ${eType===k?(k==="did"?A:R):"#1e1e1e"}`,borderRadius:8,padding:"16px 12px",cursor:"pointer",transition:"all 0.15s",textAlign:"left",WebkitTapHighlightColor:"transparent"}}>
+                <div style={{fontSize:20,marginBottom:6}}>{ic}</div>
+                <div style={{fontSize:12,fontWeight:700,color:eType===k?(k==="did"?A:R):"#555",...mono,letterSpacing:"0.06em"}}>{ti}</div>
+                <div style={{fontSize:11,color:"#383838",marginTop:4,lineHeight:1.4}}>{de}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{marginBottom:20}}>
+          <Label c={eType==="did"?"WHAT DID YOU DO EVEN THOUGH YOU DIDN'T WANT TO?":"WHAT DID YOU AVOID OR NOT DO?"}/>
+          <textarea value={txt} onChange={e=>setTxt(e.target.value)} placeholder={eType==="did"?"Be specific — what was it and why was it hard...":"What was the thing you avoided or put off..."}
+            style={{width:"100%",background:"#0d0d0d",border:`1px solid ${eType==="skipped"?"#2a1a14":"#202020"}`,color:"#f0ede6",padding:"14px",fontSize:16,lineHeight:1.65,borderRadius:6,minHeight:110}}
+            onFocus={e=>e.target.style.borderColor=eType==="skipped"?"#5a2a18":"#3a3a3a"} onBlur={e=>e.target.style.borderColor=eType==="skipped"?"#2a1a14":"#202020"}/>
+        </div>
+
+        {eType==="did"&&<div style={{marginBottom:20}}>
+          <Label c="CATEGORY"/>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {CATEGORIES.map(c=><button key={c} onClick={()=>setCat(cat===c?"":c)} style={{background:cat===c?A:"#0f0f0f",color:cat===c?"#0a0a0a":"#484848",border:`1px solid ${cat===c?A:"#1e1e1e"}`,padding:"7px 14px",fontSize:12,borderRadius:4,cursor:"pointer",letterSpacing:"0.08em",transition:"all 0.12s",WebkitTapHighlightColor:"transparent",...mono}}>{c}</button>)}
+          </div>
+        </div>}
+
+        <Moods opts={MOODS_BEFORE} val={mb} set={setMb} lbl={eType==="did"?"HOW WERE YOU FEELING GOING INTO IT?":"HOW WERE YOU FEELING WHEN YOU AVOIDED IT?"}/>
+        {eType==="did"&&<Moods opts={MOODS_AFTER} val={ma} set={setMa} lbl="HOW DID YOU FEEL AFTER?"/>}
+
+        {eType==="skipped"&&<>
+          <div style={{marginBottom:20}}>
+            <Label c="WHAT STOPPED YOU?"/>
+            <textarea value={ws} onChange={e=>setWs(e.target.value)} placeholder="Fear, distraction, laziness, something came up..."
+              style={{width:"100%",background:"#0d0d0d",border:"1px solid #2a1a14",color:"#f0ede6",padding:"12px",fontSize:15,lineHeight:1.6,borderRadius:6,minHeight:80}}
+              onFocus={e=>e.target.style.borderColor="#5a2a18"} onBlur={e=>e.target.style.borderColor="#2a1a14"}/>
+          </div>
+          <div style={{marginBottom:24}}>
+            <Label c="WHAT WILL YOU DO DIFFERENTLY NEXT TIME?"/>
+            <textarea value={nt} onChange={e=>setNt(e.target.value)} placeholder="One small, specific action..."
+              style={{width:"100%",background:"#0d0d0d",border:"1px solid #2a1a14",color:"#f0ede6",padding:"12px",fontSize:15,lineHeight:1.6,borderRadius:6,minHeight:80}}
+              onFocus={e=>e.target.style.borderColor="#5a2a18"} onBlur={e=>e.target.style.borderColor="#2a1a14"}/>
+          </div>
+        </>}
+
+        <button onClick={submit} disabled={!txt.trim()||saving} style={{width:"100%",padding:"16px",background:!txt.trim()?"#111":eType==="did"?A:"#3a1a0a",color:!txt.trim()?"#2a2a2a":eType==="did"?"#0a0a0a":R,border:eType==="skipped"&&txt.trim()?`1px solid ${R}`:"none",fontSize:14,fontWeight:700,borderRadius:8,cursor:txt.trim()?"pointer":"default",letterSpacing:"0.12em",transition:"all 0.15s",WebkitTapHighlightColor:"transparent",...mono}}>
+          {saving?"SAVING…":eType==="did"?"LOG IT ↗":"NOTE IT & LEARN ↗"}
+        </button>
+
+        {entries.length>0&&<div style={{marginTop:40}}>
+          <Label c="RECENT"/>
+          {entries.slice(0,5).map(e=><Card key={e.id} e={e} go={()=>{ setDet(e); setRefl(""); setView("detail"); }}/>)}
+        </div>}
+      </div>}
+
+      {/* ════ GOALS ════ */}
+      {view==="goals"&&<div className="fade-up">
+        <p style={{margin:"0 0 24px",fontSize:14,color:"#555",lineHeight:1.7,fontStyle:"italic"}}>Set your recurring goals. The app tracks your progress automatically and the AI uses them to give you better, more relevant advice.</p>
+
+        {/* Existing goals */}
+        {goals.length>0&&<div style={{marginBottom:28}}>
+          {goals.map(g=>{
+            const prog=countGoalProgress(entries,g);
+            const pct=Math.min(100,Math.round((prog/g.target)*100));
+            return <div key={g.id} style={{background:"#0d0d0d",border:"1px solid #1e1e1e",borderRadius:8,padding:"16px",marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                <div>
+                  <div style={{fontSize:15,color:"#f0ede6",marginBottom:2}}>{g.title}</div>
+                  <div style={{fontSize:10,...mono,color:"#555",letterSpacing:"0.1em"}}>{g.target}× {g.period.toUpperCase()} · {g.category!=="any"?g.category.toUpperCase():"ANY CATEGORY"}{g.keyword?` · "${g.keyword}"`:""}</div>
+                </div>
+                <button onClick={()=>deleteGoal(g.id)} style={{background:"none",border:"none",color:"#333",fontSize:18,cursor:"pointer",padding:"0 0 0 12px",WebkitTapHighlightColor:"transparent",lineHeight:1}}>×</button>
+              </div>
+              <ProgressBar current={prog} target={g.target} color={pct>=75?A:pct>=40?"#e0a040":R}/>
+            </div>;
+          })}
+        </div>}
+
+        {/* Add goal form */}
+        {!showGoalForm
+          ?<button onClick={()=>setShowGoalForm(true)} style={{width:"100%",background:"#0d140a",color:A,border:`1px solid #1e3a1a`,padding:"14px",fontSize:12,fontWeight:700,borderRadius:8,cursor:"pointer",letterSpacing:"0.1em",WebkitTapHighlightColor:"transparent",...mono}}>
+            + ADD A GOAL
+          </button>
+          :<div style={{background:"#0d0d0d",border:`1px solid ${O}22`,borderLeft:`3px solid ${O}`,borderRadius:8,padding:"20px"}}>
+            <div style={{fontSize:10,...mono,color:O,letterSpacing:"0.16em",marginBottom:16,fontWeight:700}}>NEW GOAL</div>
+
+            <div style={{marginBottom:16}}>
+              <Label c="GOAL TITLE (e.g. 'Workout', 'Read', 'Cold shower')"/>
+              <input value={gTitle} onChange={e=>setGTitle(e.target.value)} placeholder="5 workouts a week..."
+                style={{width:"100%",background:"#111",border:"1px solid #2a2a2a",color:"#f0ede6",padding:"12px 14px",fontSize:15,borderRadius:6,...mono}}
+                onFocus={e=>e.target.style.borderColor="#444"} onBlur={e=>e.target.style.borderColor="#2a2a2a"}/>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+              <div>
+                <Label c="TARGET (times)"/>
+                <input type="number" min="1" max="99" value={gTarget} onChange={e=>setGTarget(e.target.value)} placeholder="5"
+                  style={{width:"100%",background:"#111",border:"1px solid #2a2a2a",color:"#f0ede6",padding:"12px 14px",fontSize:15,borderRadius:6,...mono}}
+                  onFocus={e=>e.target.style.borderColor="#444"} onBlur={e=>e.target.style.borderColor="#2a2a2a"}/>
+              </div>
+              <div>
+                <Label c="PERIOD"/>
+                <div style={{display:"flex",gap:6}}>
+                  {PERIODS.map(p=><button key={p} onClick={()=>setGPeriod(p)} style={{flex:1,background:gPeriod===p?O:"#111",color:gPeriod===p?"#0a0a0a":"#555",border:`1px solid ${gPeriod===p?O:"#2a2a2a"}`,padding:"12px 4px",fontSize:11,borderRadius:6,cursor:"pointer",WebkitTapHighlightColor:"transparent",...mono}}>{p.slice(0,1).toUpperCase()}</button>)}
+                </div>
+              </div>
+            </div>
+
+            <div style={{marginBottom:16}}>
+              <Label c="WHICH CATEGORY COUNTS? (optional)"/>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {["any",...CATEGORIES].map(c=><button key={c} onClick={()=>setGCat(c)} style={{background:gCat===c?O:"#111",color:gCat===c?"#0a0a0a":"#555",border:`1px solid ${gCat===c?O:"#2a2a2a"}`,padding:"6px 12px",fontSize:11,borderRadius:4,cursor:"pointer",letterSpacing:"0.06em",WebkitTapHighlightColor:"transparent",...mono}}>{c}</button>)}
+              </div>
+            </div>
+
+            <div style={{marginBottom:20}}>
+              <Label c="KEYWORDS — separate multiple with commas (e.g. gym, run, workout)"/>
+              <input value={gKeyword} onChange={e=>setGKeyword(e.target.value)} placeholder="gym, workout, run — any match counts"
+                style={{width:"100%",background:"#111",border:"1px solid #2a2a2a",color:"#f0ede6",padding:"12px 14px",fontSize:14,borderRadius:6,...mono}}
+                onFocus={e=>e.target.style.borderColor="#444"} onBlur={e=>e.target.style.borderColor="#2a2a2a"}/>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <button onClick={()=>setShowGoalForm(false)} style={{background:"none",border:"1px solid #2a2a2a",color:"#555",padding:"12px",fontSize:12,borderRadius:6,cursor:"pointer",...mono}}>CANCEL</button>
+              <button onClick={addGoal} disabled={!gTitle.trim()||!gTarget} style={{background:gTitle.trim()&&gTarget?O:"#111",color:gTitle.trim()&&gTarget?"#0a0a0a":"#333",border:"none",padding:"12px",fontSize:12,fontWeight:700,borderRadius:6,cursor:gTitle.trim()&&gTarget?"pointer":"default",...mono}}>
+                SAVE GOAL
+              </button>
+            </div>
+          </div>
+        }
+      </div>}
+
+      {/* ════ TODAY / WEEK ════ */}
+      {(view==="today"||view==="week")&&(()=>{
+        const list=view==="today"?today:week;
+        return <div className="fade-up">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+            <div style={{...mono,fontSize:12,color:"#444"}}><span style={{color:A}}>{list.filter(e=>e.type==="did").length}</span> done · <span style={{color:R}}>{list.filter(e=>e.type==="skipped").length}</span> skipped</div>
+            <button onClick={()=>getSummary(view)} style={{background:"#0f0f0f",color:A,border:"1px solid #202020",padding:"8px 16px",fontSize:11,borderRadius:4,cursor:"pointer",letterSpacing:"0.1em",WebkitTapHighlightColor:"transparent",...mono}}>✦ AI SUMMARY</button>
+          </div>
+          {(sumL||sum)&&<div style={{background:"#0d0d0d",border:"1px solid #1e1e1e",borderLeft:`3px solid ${A}`,padding:"16px",borderRadius:4,marginBottom:20}}>
+            {sumL?<div style={{display:"flex",gap:8,alignItems:"center"}}><div style={{width:5,height:5,borderRadius:"50%",background:A,animation:"pulse 1s infinite"}}/><span style={{fontSize:12,color:"#444",...mono}}>Reflecting…</span></div>
+                 :<p style={{margin:0,fontSize:14,lineHeight:1.8,color:"#bbb",whiteSpace:"pre-wrap"}}>{sum}</p>}
+          </div>}
+          {list.length===0
+            ?<div style={{textAlign:"center",padding:"60px 0",color:"#222"}}><div style={{fontSize:32,marginBottom:8}}>◯</div><p style={{...mono,fontSize:11,letterSpacing:"0.14em"}}>NOTHING YET</p></div>
+            :list.map(e=><Card key={e.id} e={e} go={()=>{ setDet(e); setRefl(""); setView("detail"); }}/>)}
+        </div>;
+      })()}
+
+      {/* ════ INSIGHTS ════ */}
+      {view==="insights"&&<div className="fade-up">
+        <p style={{margin:"0 0 20px",fontSize:14,color:"#555",lineHeight:1.7,fontStyle:"italic"}}>Reads across all your entries and goals to find your real patterns — personalised tips from your actual data.</p>
+        {entries.length<3
+          ?<div style={{background:"#0f0f0f",border:"1px solid #1e1e1e",borderLeft:"3px solid #333",padding:20,borderRadius:4}}><p style={{margin:0,fontSize:13,color:"#555",lineHeight:1.7,...mono}}>Log at least 3 entries first.<br/><span style={{color:"#333"}}>You have {entries.length} so far.</span></p></div>
+          :<button onClick={genInsights} disabled={insL} style={{width:"100%",background:insL?"#111":"#12081e",color:insL?"#444":P,border:`1px solid ${insL?"#222":"#2a1a4a"}`,padding:"15px",fontSize:12,fontWeight:700,borderRadius:8,cursor:insL?"default":"pointer",letterSpacing:"0.12em",transition:"all 0.15s",WebkitTapHighlightColor:"transparent",...mono}}>
+            {insL?<span style={{display:"flex",gap:8,alignItems:"center",justifyContent:"center"}}><span style={{display:"inline-block",width:5,height:5,borderRadius:"50%",background:P,animation:"pulse 1s infinite"}}/>ANALYSING {entries.length} ENTRIES…</span>
+                :ins?`↻ REGENERATE INSIGHTS (${entries.length} entries)`:`✦ GENERATE INSIGHTS FROM ALL ${entries.length} ENTRIES`}
+          </button>
+        }
+        {entries.length>=3&&(()=>{
+          const dn=entries.filter(e=>e.type==="did").length, sk=entries.filter(e=>e.type==="skipped").length;
+          const sh=entries.filter(e=>e.moodBefore&&e.moodAfter).length;
+          return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,margin:"20px 0"}}>
+            {[["DONE RATE",`${Math.round(dn/entries.length*100)}%`,A],["SKIPPED",sk,R],["GOALS",goals.length,O]].map(([l,v,c])=>(
+              <div key={l} style={{background:"#0d0d0d",border:"1px solid #181818",borderRadius:4,padding:"12px 14px"}}>
+                <div style={{fontSize:8,...mono,color:"#3a3a3a",letterSpacing:"0.16em",marginBottom:6}}>{l}</div>
+                <div style={{fontSize:22,fontWeight:400,color:c,fontFamily:"Georgia,serif"}}>{v}</div>
+              </div>
+            ))}
+          </div>;
+        })()}
+        {ins&&!insL&&parseInsights(ins).map(({h,c},i)=>{
+          const col=SC[h]||P, isAct=h==="ONE THING TO DO THIS WEEK";
+          return <div key={i} className={`fu${Math.min(i+1,6)}`} style={{background:isAct?"#0e0814":"#0d0d0d",border:`1px solid ${isAct?"#2a1a4a":"#181818"}`,borderLeft:`3px solid ${col}`,borderRadius:4,padding:"18px",marginBottom:10}}>
+            {h&&<div style={{fontSize:9,...mono,color:col,letterSpacing:"0.18em",marginBottom:10,fontWeight:700}}>{h}</div>}
+            <div style={{fontSize:14,lineHeight:1.8,color:isAct?"#d0c8f0":"#aaa",whiteSpace:"pre-wrap"}}>{c}</div>
+          </div>;
+        })}
+      </div>}
+
+      {/* ════ DETAIL ════ */}
+      {view==="detail"&&det&&<div className="fade-up">
+        <button onClick={()=>setView("log")} style={{background:"none",border:"none",color:"#3a3a3a",...mono,fontSize:11,cursor:"pointer",marginBottom:20,padding:0,letterSpacing:"0.12em",WebkitTapHighlightColor:"transparent"}}>← BACK</button>
+        <div style={{marginBottom:20}}>
+          <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+            {det.type==="skipped"?<span style={{fontSize:9,...mono,color:R,letterSpacing:"0.12em",background:"#1c0e0a",padding:"3px 8px",borderRadius:2}}>SKIPPED</span>
+              :det.category&&<span style={{fontSize:9,...mono,color:A,letterSpacing:"0.12em",background:"#0d1a0a",padding:"3px 8px",borderRadius:2}}>{det.category.toUpperCase()}</span>}
+            <span style={{fontSize:11,color:"#3a3a3a",...mono}}>{fDate(det.ts)} · {fTime(det.ts)}</span>
+          </div>
+          <p style={{margin:"0 0 16px",fontSize:17,lineHeight:1.7}}>{det.text}</p>
+          {(det.moodBefore||det.moodAfter)&&<div style={{display:"flex",gap:20,flexWrap:"wrap",marginBottom:16}}>
+            {det.moodBefore&&<div><div style={{fontSize:9,color:"#3a3a3a",...mono,letterSpacing:"0.14em",marginBottom:4}}>GOING IN</div><div style={{fontSize:13,color:"#777"}}>{det.moodBefore}</div></div>}
+            {det.moodAfter&&<><div style={{color:"#252525",alignSelf:"flex-end",paddingBottom:2}}>→</div><div><div style={{fontSize:9,color:"#3a3a3a",...mono,letterSpacing:"0.14em",marginBottom:4}}>AFTER</div><div style={{fontSize:13,color:A}}>{det.moodAfter}</div></div></>}
+          </div>}
+          {det.type==="skipped"&&(det.whatStopped||det.nextTime)&&<div style={{background:"#110a08",border:"1px solid #2a1a14",borderRadius:4,padding:16}}>
+            {det.whatStopped&&<div style={{marginBottom:det.nextTime?14:0}}><div style={{fontSize:9,...mono,color:R,letterSpacing:"0.14em",marginBottom:6}}>WHAT STOPPED ME</div><p style={{margin:0,fontSize:14,color:"#8a7a74",lineHeight:1.65}}>{det.whatStopped}</p></div>}
+            {det.nextTime&&<div><div style={{fontSize:9,...mono,color:"#c8a060",letterSpacing:"0.14em",marginBottom:6}}>NEXT TIME</div><p style={{margin:0,fontSize:14,color:"#8a7a74",lineHeight:1.65}}>{det.nextTime}</p></div>}
+          </div>}
+        </div>
+        <div style={{height:1,background:"#181818",marginBottom:18}}/>
+        {!refl&&!reflL&&<button onClick={()=>getRefl(det)} style={{width:"100%",background:"#0d1a0a",color:A,border:"1px solid #1e3a1a",padding:"14px",fontSize:12,...mono,letterSpacing:"0.12em",borderRadius:8,cursor:"pointer",WebkitTapHighlightColor:"transparent"}}>✦ GET AI REFLECTION ON THIS</button>}
+        {reflL&&<div style={{display:"flex",gap:8,alignItems:"center",padding:"12px 0"}}><div style={{width:5,height:5,borderRadius:"50%",background:A,animation:"pulse 1s infinite"}}/><span style={{fontSize:12,color:"#444",...mono}}>Thinking…</span></div>}
+        {refl&&<div style={{background:"#0d0d0d",border:"1px solid #1a1a1a",borderLeft:`3px solid ${A}`,padding:"16px",borderRadius:4}}>
+          <div style={{fontSize:9,...mono,color:A,letterSpacing:"0.16em",marginBottom:10}}>REFLECTION</div>
+          <p style={{margin:0,fontSize:14,lineHeight:1.8,color:"#aaa",whiteSpace:"pre-wrap"}}>{refl}</p>
+        </div>}
+      </div>}
+
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
